@@ -17,6 +17,19 @@ const projectList = document.querySelector('#project-list');
 const emptyState = document.querySelector('#empty-state');
 const message = document.querySelector('#message');
 
+// Search, Filter, and Sort elements & state
+const searchInput = document.querySelector('#search-input');
+const sortSelect = document.querySelector('#sort-select');
+const filterPills = document.querySelectorAll('.filter-pill');
+const countAll = document.querySelector('#count-all');
+const countPlanned = document.querySelector('#count-planned');
+const countInProgress = document.querySelector('#count-in-progress');
+const countCompleted = document.querySelector('#count-completed');
+
+let searchQuery = '';
+let activeFilter = 'All';
+let sortBy = 'newest';
+
 const validStatuses = [
     'Planned',
     'In Progress',
@@ -66,6 +79,64 @@ function isValidProjectArray(data) {
     });
 }
 
+// Update count badges on filter pills.
+function updateFilterCounts() {
+    const counts = {
+        All: projects.length,
+        Planned: 0,
+        'In Progress': 0,
+        Completed: 0
+    };
+
+    projects.forEach(project => {
+        if (Object.prototype.hasOwnProperty.call(counts, project.status)) {
+            counts[project.status]++;
+        }
+    });
+
+    if (countAll) countAll.textContent = counts.All;
+    if (countPlanned) countPlanned.textContent = counts.Planned;
+    if (countInProgress) countInProgress.textContent = counts['In Progress'];
+    if (countCompleted) countCompleted.textContent = counts.Completed;
+}
+
+// Filter and sort the in-memory projects.
+function getFilteredAndSortedProjects() {
+    let result = projects.slice();
+
+    // 1. Status Filter
+    if (activeFilter !== 'All') {
+        result = result.filter(project => project.status === activeFilter);
+    }
+
+    // 2. Search Query (matches project name case-insensitively)
+    const query = searchQuery.trim().toLowerCase();
+    if (query !== '') {
+        result = result.filter(project =>
+            project.name.toLowerCase().includes(query)
+        );
+    }
+
+    // 3. Sorting
+    result.sort((a, b) => {
+        if (sortBy === 'newest') {
+            return b.id - a.id;
+        }
+        if (sortBy === 'oldest') {
+            return a.id - b.id;
+        }
+        if (sortBy === 'name-asc') {
+            return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        }
+        if (sortBy === 'name-desc') {
+            return b.name.localeCompare(a.name, undefined, { sensitivity: 'base' });
+        }
+        return 0;
+    });
+
+    return result;
+}
+
 // Disable mutation controls while requests are pending
 // or when the collection has not loaded successfully.
 function updateControls() {
@@ -76,6 +147,12 @@ function updateControls() {
     saveButton.disabled = disabled;
     cancelButton.disabled = disabled;
 
+    if (searchInput) searchInput.disabled = !hasLoaded;
+    if (sortSelect) sortSelect.disabled = !hasLoaded;
+    filterPills.forEach(pill => {
+        pill.disabled = !hasLoaded;
+    });
+
     projectList.querySelectorAll('button[data-action]').forEach(button => {
         button.disabled = disabled;
     });
@@ -84,22 +161,38 @@ function updateControls() {
 // Display the current collection or the appropriate empty/error state.
 function render() {
     projectList.textContent = '';
+    updateFilterCounts();
 
     if (!hasLoaded) {
         emptyState.textContent = isLoading
             ? 'Loading projects...'
             : 'Projects could not be loaded. Refresh the page to try again.';
-
+        emptyState.hidden = false;
         updateControls();
         return;
     }
 
-    projects.forEach(project => {
+    const displayedProjects = getFilteredAndSortedProjects();
+
+    displayedProjects.forEach(project => {
         const item = document.createElement('li');
         item.dataset.id = project.id;
 
         const details = document.createElement('span');
-        details.textContent = `${project.name} - ${project.status}`;
+        details.className = 'project-details';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'project-name';
+        nameSpan.textContent = project.name;
+
+        const statusBadge = document.createElement('span');
+        const slug = project.status.toLowerCase().replace(/\s+/g, '-');
+        statusBadge.className = `status-badge status-${slug}`;
+        statusBadge.textContent = project.status;
+
+        details.appendChild(nameSpan);
+        details.appendChild(document.createTextNode(' '));
+        details.appendChild(statusBadge);
 
         const editButton = document.createElement('button');
         editButton.type = 'button';
@@ -113,18 +206,33 @@ function render() {
         deleteButton.dataset.action = 'delete';
         deleteButton.dataset.id = project.id;
 
+        const actions = document.createElement('div');
+        actions.className = 'project-actions';
+        actions.appendChild(editButton);
+        actions.appendChild(document.createTextNode(' '));
+        actions.appendChild(deleteButton);
+
         item.appendChild(details);
-        item.appendChild(document.createTextNode(' '));
-        item.appendChild(editButton);
-        item.appendChild(document.createTextNode(' '));
-        item.appendChild(deleteButton);
+        item.appendChild(actions);
 
         projectList.appendChild(item);
     });
 
-    emptyState.textContent = projects.length === 0
-        ? 'No projects yet.'
-        : '';
+    if (displayedProjects.length === 0) {
+        if (projects.length === 0) {
+            emptyState.textContent = 'No projects added yet.';
+        } else if (searchQuery.trim() !== '' && activeFilter !== 'All') {
+            emptyState.textContent = `No "${activeFilter}" projects matching "${searchQuery.trim()}".`;
+        } else if (searchQuery.trim() !== '') {
+            emptyState.textContent = `No projects matching "${searchQuery.trim()}".`;
+        } else {
+            emptyState.textContent = `No ${activeFilter} projects found.`;
+        }
+        emptyState.hidden = false;
+    } else {
+        emptyState.textContent = '';
+        emptyState.hidden = true;
+    }
 
     updateControls();
 }
@@ -372,6 +480,41 @@ cancelButton.addEventListener('click', () => {
 
     resetForm();
     message.textContent = 'Edit cancelled.';
+});
+
+// Search input listener (live filtering)
+if (searchInput) {
+    searchInput.addEventListener('input', event => {
+        searchQuery = event.target.value;
+        render();
+    });
+}
+
+// Sort dropdown listener
+if (sortSelect) {
+    sortSelect.addEventListener('change', event => {
+        sortBy = event.target.value;
+        render();
+    });
+}
+
+// Filter pills click listener
+filterPills.forEach(pill => {
+    pill.addEventListener('click', () => {
+        if (isBusy || !hasLoaded) {
+            return;
+        }
+
+        activeFilter = pill.dataset.filter;
+
+        filterPills.forEach(btn => {
+            const isActive = btn === pill;
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+
+        render();
+    });
 });
 
 // Load the collection when the page starts.
